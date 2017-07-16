@@ -4,7 +4,6 @@
 package forward
 
 import (
-	"bufio"
 	"crypto/tls"
 	"io"
 	"net"
@@ -15,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"fmt"
 
 	"github.com/vulcand/oxy/utils"
 )
@@ -307,25 +308,49 @@ func (f *websocketForwarder) serveHTTP(w http.ResponseWriter, req *http.Request,
 		return
 	}
 
-	br := bufio.NewReader(targetConn)
-	resp, err := http.ReadResponse(br, req)
-	resp.Write(underlyingConn)
-	defer resp.Body.Close()
-
-	// We connect the conn only if the switching protocol has not failed
-	if resp.StatusCode == http.StatusSwitchingProtocols {
-		ctx.log.Infof("Switching protocol success")
-		errc := make(chan error, 2)
-		replicate := func(dst io.Writer, src io.Reader) {
-			_, err := io.Copy(dst, src)
-			errc <- err
-		}
-		go replicate(targetConn, underlyingConn)
-		go replicate(underlyingConn, targetConn)
-		<-errc
-	} else {
-		ctx.log.Infof("Switching protocol failed")
+	errc := make(chan error, 2)
+	replicate := func(dst io.Writer, src io.Reader) {
+		_, err := io.Copy(dst, src)
+		errc <- err
 	}
+	go replicate(targetConn, underlyingConn)
+	go replicate(WebsocketWriter{Writer: underlyingConn}, targetConn)
+	err = <-errc
+	ctx.log.Errorf("Websocket failed: %v", err)
+}
+
+type WebsocketWriter struct {
+	io.Writer
+	statusAlreadyReaded bool
+}
+
+func (w WebsocketWriter) Write(p []byte) (n int, err error) {
+	n, err = w.Writer.Write(p)
+	if err != nil {
+		return
+	}
+
+	if w.statusAlreadyReaded {
+		return
+	}
+
+	lines := strings.SplitN(string(p), "\n", 1)
+	chunk := strings.SplitN(lines[0], " ", 3)
+
+	if len(chunk) < 3 {
+		return 0, fmt.Errorf("Invalid response")
+	}
+	statusCode, err := strconv.Atoi(chunk[1])
+	if err != nil {
+		return 0, err
+	}
+
+	if statusCode != http.StatusSwitchingProtocols {
+		return 0, fmt.Errorf("Switching Protocol Failed")
+	}
+
+	w.statusAlreadyReaded = true
+	return
 }
 
 // copyRequest makes a copy of the specified request.

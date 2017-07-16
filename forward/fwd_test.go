@@ -1,23 +1,24 @@
 package forward
 
 import (
-	"bytes"
 	"fmt"
 	"net"
 	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/vulcand/oxy/testutils"
-	"github.com/vulcand/oxy/utils"
-
-	"golang.org/x/net/websocket"
-	. "gopkg.in/check.v1"
 	"bufio"
+	"bytes"
 	"io"
 	"io/ioutil"
+	"net/http/httptest"
+	"net/textproto"
+	"strings"
+
+	"github.com/vulcand/oxy/testutils"
+	"github.com/vulcand/oxy/utils"
+	"golang.org/x/net/websocket"
+	. "gopkg.in/check.v1"
 )
 
 func TestFwd(t *testing.T) { TestingT(t) }
@@ -359,6 +360,89 @@ func (s *FwdSuite) TestWebsocketUpgradeFailed(c *C) {
 	br = bufio.NewReader(conn)
 	resp, err = http.ReadResponse(br, req)
 	c.Assert(resp, IsNil)
+
+}
+
+func (s *FwdSuite) TestForwardsWebsocketTrafficLongConnection(c *C) {
+	f, err := New()
+	c.Assert(err, IsNil)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/websocket", func(w http.ResponseWriter, req *http.Request) {
+		content := `HTTP/1.1 101 Switching Protocols
+Upgrade: websocket
+Connection: upgrade
+Transfer-Encoding: chunked
+Sec-Websocket-Accept: test
+Content-Type: application/octet-stream
+Date: Thu, 13 Jul 2017 01:15:53 GMT
+Server: Python/3.6 aiohttp/2.2.0
+
+test`
+		hijacker, ok := w.(http.Hijacker)
+		c.Assert(ok, Equals, true)
+		conn, _, err := hijacker.Hijack()
+		c.Assert(err, IsNil)
+		conn.Write([]byte(content))
+	})
+
+	srv := testutils.NewHandler(func(w http.ResponseWriter, req *http.Request) {
+		mux.ServeHTTP(w, req)
+	})
+	defer srv.Close()
+
+	proxy := testutils.NewHandler(func(w http.ResponseWriter, req *http.Request) {
+		path := req.URL.Path // keep the original path
+		// Set new backend URL
+		req.URL = testutils.ParseURI(srv.URL)
+
+		req.URL.Path = path
+		f.ServeHTTP(w, req)
+	})
+	defer proxy.Close()
+
+	proxyAddr := proxy.Listener.Addr().String()
+	//proxyAddr = srv.Listener.Addr().String()
+
+	client, err := net.DialTimeout("tcp", proxyAddr, dialTimeout)
+	c.Assert(err, IsNil)
+
+	req, _ := http.NewRequest("GET", "ws://"+proxyAddr+"/api/websocket", nil)
+	req.Header.Add("Connection", "Upgrade")
+	req.Header.Add("Upgrade", "websocket")
+	req.Header.Add("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	req.Header.Add("Sec-Websocket-Version", "13")
+	req.Write(client)
+
+	readChan := make(chan struct{})
+	go func() {
+		br := bufio.NewReader(client)
+		reader := textproto.NewReader(br)
+		line, err := reader.ReadLine()
+		c.Assert(err, IsNil)
+		c.Assert(line, Equals, "HTTP/1.1 101 Switching Protocols")
+		for {
+			line, err := reader.ReadLine()
+			c.Assert(err, IsNil)
+			if line == "" {
+				break
+			}
+		}
+
+		readed := make([]byte, 4)
+		reader.R.Read(readed)
+		c.Assert(string(readed), Equals, "test")
+		readChan <- struct{}{}
+
+	}()
+	ticker := time.NewTicker(2 * time.Second)
+	select {
+	case <-readChan:
+		c.Succeed()
+	case <-ticker.C:
+		fmt.Println("Timeout")
+		c.Fail()
+	}
 
 }
 
