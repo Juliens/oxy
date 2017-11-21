@@ -15,7 +15,7 @@ import (
 
 	"time"
 
-	log "github.com/sirupsen/logrus"
+	log "github.com/Sirupsen/logrus"
 	. "gopkg.in/check.v1"
 )
 

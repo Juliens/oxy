@@ -45,8 +45,8 @@ import (
 	"net"
 	"reflect"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/mailgun/multibuf"
-	log "github.com/sirupsen/logrus"
 	"github.com/vulcand/oxy/utils"
 )
 
