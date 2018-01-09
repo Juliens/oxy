@@ -346,8 +346,8 @@ func (f *httpForwarder) serveWebSocket(w http.ResponseWriter, req *http.Request,
 	defer underlyingConn.Close()
 	defer targetConn.Close()
 
-	errclient := make(chan error)
-	errbackend := make(chan error)
+	errClient := make(chan error)
+	errBackend := make(chan error)
 	replicateWebsocketConn := func(dst, src *websocket.Conn, errc chan error) {
 		for {
 			msgType, msg, err := src.ReadMessage()
@@ -371,14 +371,14 @@ func (f *httpForwarder) serveWebSocket(w http.ResponseWriter, req *http.Request,
 		}
 	}
 
-	go replicateWebsocketConn(underlyingConn, targetConn, errclient)
-	go replicateWebsocketConn(targetConn, underlyingConn, errbackend)
+	go replicateWebsocketConn(underlyingConn, targetConn, errClient)
+	go replicateWebsocketConn(targetConn, underlyingConn, errBackend)
 
 	var message string
 	select {
-	case err = <-errclient:
+	case err = <-errClient:
 		message = "vulcand/oxy/forward/websocket: Error when copying from backend to client: %v"
-	case err = <-errbackend:
+	case err = <-errBackend:
 		message = "vulcand/oxy/forward/websocket: Error when copying from client to backend: %v"
 
 	}
