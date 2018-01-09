@@ -283,11 +283,7 @@ func (f *httpForwarder) serveWebSocket(w http.ResponseWriter, req *http.Request,
 
 	dialer := websocket.DefaultDialer
 
-	for _, value := range strings.Split(req.Header.Get("Sec-Websocket-Extensions"), ";") {
-		if strings.TrimSpace(value) == "permessage-deflate" {
-			dialer.EnableCompression = true
-		}
-	}
+	dialer.EnableCompression = strings.Contains(req.Header.Get("Sec-Websocket-Extensions"), "permessage-deflate")
 
 	if outReq.URL.Scheme == "wss" && f.tlsClientConfig != nil {
 		dialer.TLSClientConfig = f.tlsClientConfig.Clone()
@@ -330,11 +326,7 @@ func (f *httpForwarder) serveWebSocket(w http.ResponseWriter, req *http.Request,
 		return true
 	}}
 
-	for _, value := range strings.Split(resp.Header.Get("Sec-Websocket-Extensions"), ";") {
-		if strings.TrimSpace(value) == "permessage-deflate" {
-			upgrader.EnableCompression = true
-		}
-	}
+	upgrader.EnableCompression = strings.Contains(resp.Header.Get("Sec-Websocket-Extensions"), "permessage-deflate")
 
 	utils.RemoveHeaders(resp.Header, WebsocketUpgradeHeaders...)
 
